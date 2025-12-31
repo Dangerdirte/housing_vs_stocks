@@ -9,7 +9,7 @@ class InvestmentSimulation:
         self.history = []  # List of dicts with yearly status
 
 class HousingInvestment:
-    def __init__(self, start_year, house_price, down_payment, interest_rate=0.05, amortization_years=25):
+    def __init__(self, start_year, house_price, down_payment, interest_rate=0.05, amortization_years=25, property_tax_rate=0.006, monthly_insurance=100):
         self.start_year = start_year
         self.purchase_price = house_price
         self.down_payment = down_payment
@@ -29,6 +29,13 @@ class HousingInvestment:
         # This represents labor/materials cost.
         initial_maintenance_rate = 0.01 # 1% rule
         self.monthly_maintenance_cost = (house_price * initial_maintenance_rate) / 12
+        
+        # New Costs (Tax & Insurance)
+        self.property_tax_rate = property_tax_rate
+        self.monthly_insurance = monthly_insurance
+        
+        self.total_property_tax = 0
+        self.total_insurance = 0
         
         self.monthly_payment = 0
         self.calculate_monthly_payment()
@@ -85,11 +92,22 @@ class HousingInvestment:
         
         self.total_maintenance_cost += self.monthly_maintenance_cost
         
+        # Taxes & Insurance
+        # Property Tax is usually based on Assessed Value (often lags Market Value, but let's use Market for simplicity/conservatism)
+        monthly_tax = (self.current_value * self.property_tax_rate) / 12
+        self.total_property_tax += monthly_tax
+        
+        # Insurance (Inflates)
+        self.monthly_insurance *= (1 + monthly_inflation)
+        self.total_insurance += self.monthly_insurance
+        
         return {
             "year": year,
             "equity": self.equity,
             "value": self.current_value,
             "maintenance": self.monthly_maintenance_cost,
+            "property_tax": monthly_tax,
+            "insurance": self.monthly_insurance,
             "payment": self.monthly_payment
         }
 
@@ -162,15 +180,39 @@ class StockInvestment:
         self.taxable_book_cost = initial_deposit
         self.total_dividends = 0
         self.annual_rrsp_contributions = 0 # Track for refund calc
+        
+        # Friction Cost Tracking
+        self.total_fees_paid = 0
+        self.total_tax_drag_cost = 0
     
-    def simulate_month(self, year, annual_return_rate, monthly_contribution=0, tfsa_limit_room=0, rrsp_limit_room=0):
+    def simulate_month(self, year, annual_return_rate, monthly_contribution=0, tfsa_limit_room=0, rrsp_limit_room=0, mer_fee_rate=0.0, tax_drag_rate=0.0):
         # Calculates Monthly Return Factor
-        monthly_return = (1 + annual_return_rate)**(1/12) - 1
+        
+        # Effective Returns for different account types
+        # MER applies to ALL (Management fees)
+        # Tax Drag applies ONLY to Taxable (Dividends taxed annually)
+        
+        rate_registered = annual_return_rate - mer_fee_rate
+        rate_taxable = annual_return_rate - mer_fee_rate - tax_drag_rate
+        
+        monthly_return_reg = (1 + rate_registered)**(1/12) - 1
+        monthly_return_tax = (1 + rate_taxable)**(1/12) - 1
+        
+        # Calculate Costs (Approximation for reporting)
+        # We estimate the dollar value "lost" this month to fees/drag
+        # Cost = Balance * (AnnualRate / 12)
+        total_balance = self.tfsa_balance + self.rrsp_balance + self.taxable_balance
+        monthly_mer_cost = total_balance * (mer_fee_rate / 12)
+        monthly_drag_cost = self.taxable_balance * (tax_drag_rate / 12)
+        
+        self.total_fees_paid += monthly_mer_cost
+        self.total_tax_drag_cost += monthly_drag_cost
         
         # 1. Growth
-        self.tfsa_balance *= (1 + monthly_return)
-        self.rrsp_balance *= (1 + monthly_return)
-        self.taxable_balance *= (1 + monthly_return)
+        # 1. Growth
+        self.tfsa_balance *= (1 + monthly_return_reg)
+        self.rrsp_balance *= (1 + monthly_return_reg)
+        self.taxable_balance *= (1 + monthly_return_tax)
         
         # 2. Contributions
         used_tfsa = 0

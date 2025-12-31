@@ -266,3 +266,16 @@ def get_monthly_housing_price(year, month, city="National"):
     seasonal_multiplier = SEASONALITY_INDEX.get(month, 1.0)
     
     return base_price * seasonal_multiplier
+
+# Property Tax Rates (Approximate % of Assessed Value)
+PROPERTY_TAX_RATES = {
+    "Toronto": 0.61,
+    "Vancouver": 0.29,
+    "Calgary": 0.74,
+    "Montreal": 0.76, # nominal rate, though complexity exists
+    "National": 1.00  # Conservative estimate
+}
+
+def get_property_tax_rate(city):
+    """Returns the estimated property tax rate (%) for a given city."""
+    return PROPERTY_TAX_RATES.get(city, 1.0)

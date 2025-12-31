@@ -1,7 +1,8 @@
 import data_loader
 from models import HousingInvestment, StockInvestment
 
-def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=None, city="National", marginal_tax_rate=0.40, move_freq_years="Never"):
+def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=None, city="National", marginal_tax_rate=0.40, move_freq_years="Never",
+                   property_tax_rate_pct=0.6, monthly_insurance=150):
     """
     Runs the simulation and returns a dictionary with results and history.
     """
@@ -35,7 +36,9 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
         house_price=house_price,
         down_payment=raw_down_payment,
         interest_rate=initial_mortgage_rate, 
-        amortization_years=mortgage_years
+        amortization_years=mortgage_years,
+        property_tax_rate=property_tax_rate_pct / 100.0,
+        monthly_insurance=monthly_insurance
     )
 
     # Stock Model Setup
@@ -154,7 +157,8 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
                         housing_model.equity = 0 # bankrupt logic simplified
                         
             # Cash Flow
-            housing_monthly_cost = h_stat['payment'] + h_stat['maintenance']
+            # Now includes Property Tax + Insurance
+            housing_monthly_cost = h_stat['payment'] + h_stat['maintenance'] + h_stat['property_tax'] + h_stat['insurance']
             monthly_stock_contribution = housing_monthly_cost - year_rent
             
             # Inject PROCESSED Tax Refund in March (Standard Canada timing)
@@ -168,10 +172,19 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
 
             # Simulate Stocks
             # Pass available TFSA room. The model returns how much it used.
+            # Investment Costs:
+            # MER = 0.15% (0.0015)
+            # Tax Drag = Dividend Yield (1.8%) * Marginal Tax Rate
+            mer_rate = 0.0015 
+            div_yield = 0.018
+            tax_drag = div_yield * marginal_tax_rate
+            
             s_stat = stock_model.simulate_month(y, annual_return_rate=annual_stock_return, 
                                                 monthly_contribution=monthly_stock_contribution,
                                                 tfsa_limit_room=unused_tfsa_room,
-                                                rrsp_limit_room=unused_rrsp_room)
+                                                rrsp_limit_room=unused_rrsp_room,
+                                                mer_fee_rate=mer_rate,
+                                                tax_drag_rate=tax_drag)
             
             # Deduct used room
             unused_tfsa_room -= s_stat.get('tfsa_used', 0)
@@ -229,7 +242,11 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
         "inflation_index": cumulative_inflation_index,
         "total_mortgage_interest": housing_model.total_interest_paid,
         "total_maintenance": housing_model.total_maintenance_cost,
+        "total_property_tax": housing_model.total_property_tax,
+        "total_insurance": housing_model.total_insurance,
         "total_rent_paid": total_rent_paid,
         "total_stock_contributions": total_stock_contributions,
-        "total_transaction_friction": total_transaction_friction
+        "total_transaction_friction": total_transaction_friction,
+        "total_stock_fees": stock_model.total_fees_paid,
+        "total_stock_tax_drag": stock_model.total_tax_drag_cost
     }

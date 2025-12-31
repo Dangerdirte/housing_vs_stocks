@@ -33,6 +33,17 @@ move_freq = st.sidebar.select_slider("Move Home Every X Years (Friction Costs)",
 
 if st.sidebar.button("Run Simulation", type="primary"):
     # Run Simulation
+    # Estimate Costs automatically
+    est_property_tax = data_loader.get_property_tax_rate(city)
+    
+    # Estimate Insurance: ~0.2% of purchase price annually, divided by 12
+    # e.g. 500k house -> $1,000/yr -> $83/mo. 1M house -> $166/mo.
+    # We calculate the start year price first to get this estimate
+    # (simulation does this internally but we need it for the args, or let simulation handle it?
+    # Simulation takes raw values. Let's get price here.)
+    start_price = data_loader.get_housing_price(start_year, city)
+    est_monthly_insurance = (start_price * 0.002) / 12
+    
     results = simulation.run_simulation(
         start_year=start_year, 
         mortgage_years=amortization, 
@@ -40,7 +51,9 @@ if st.sidebar.button("Run Simulation", type="primary"):
         initial_rent=initial_rent_override,
         city=city,
         marginal_tax_rate=marginal_tax/100.0,
-        move_freq_years=move_freq
+        move_freq_years=move_freq,
+        property_tax_rate_pct=est_property_tax,
+        monthly_insurance=est_monthly_insurance
     )
     
     history_df = pd.DataFrame(results['history'])
@@ -57,9 +70,11 @@ if st.sidebar.button("Run Simulation", type="primary"):
         # Calculate mortgage amount for display
         mortgage_amt = results['start_house_price'] - results['initial_down_payment']
         st.metric("Mortgage Amount", f"${mortgage_amt:,.0f}")
+        st.caption(f"Estimated Tax: {est_property_tax}% | Ins: ${est_monthly_insurance:,.0f}/mo")
     with col_start3:
         st.metric("Initial Capital (Stocks)", f"${results['total_initial_capital']:,.0f}", 
                  help=f"Includes Down Payment (${results['initial_down_payment']:,.0f}) + Closing Costs (${results['closing_costs_paid']:,.0f}) saved.")
+        st.caption(f"Fees: 0.15% MER | Tax Drag: {1.8 * marginal_tax/100.0:.2f}% (Taxable)")
 
     st.divider()
 
@@ -121,9 +136,11 @@ if st.sidebar.button("Run Simulation", type="primary"):
     """)
     
     # Calculate Totals First
-    total_rent_burn = results['total_rent_paid']
+    total_rent_burn = results['total_rent_paid'] + results['total_stock_fees'] + results['total_stock_tax_drag']
     total_home_burn = (results['total_mortgage_interest'] + 
                        results['total_maintenance'] + 
+                       results['total_property_tax'] +
+                       results['total_insurance'] +
                        results['closing_costs_paid'] + 
                        results['selling_costs_estimated'] + 
                        results['total_transaction_friction'])
@@ -131,23 +148,27 @@ if st.sidebar.button("Run Simulation", type="primary"):
     # Display Totals as Big Metrics
     col_burn1, col_burn2 = st.columns(2)
     with col_burn1:
-        st.metric("Total Rent Paid", f"${total_rent_burn:,.0f}")
+        st.metric("Total Renter 'Burn'", f"${total_rent_burn:,.0f}", help="Rent + Fees + Tax Drag")
     with col_burn2:
          diff_burn = total_home_burn - total_rent_burn
          st.metric("Total Home Ownership 'Burn'", f"${total_home_burn:,.0f}",
                    delta=f"{diff_burn:,.0f} vs Rent", delta_color="inverse")
 
     burn_data = {
-        "Category": ["Rent", "Mortgage Interest", "Maintenance", "Buying Costs (LTT)", "Selling Costs (Agent)", "Moving Friction (Periodic)"],
+        "Category": ["Rent", "Investment Fees", "Tax Drag", "Mortgage Interest", "Maintenance", "Property Tax", "Home Insurance", "Buying Costs (LTT)", "Selling Costs (Agent)", "Moving Friction (Periodic)"],
         "Amount": [
             results['total_rent_paid'],
+            results['total_stock_fees'],
+            results['total_stock_tax_drag'],
             results['total_mortgage_interest'],
             results['total_maintenance'],
+            results['total_property_tax'],
+            results['total_insurance'],
             results['closing_costs_paid'],
             results['selling_costs_estimated'], # Final sale
             results['total_transaction_friction'] # Periodic moves
         ],
-        "Scenario": ["Renter", "Homeowner", "Homeowner", "Homeowner", "Homeowner", "Homeowner"]
+        "Scenario": ["Renter", "Renter", "Renter", "Homeowner", "Homeowner", "Homeowner", "Homeowner", "Homeowner", "Homeowner", "Homeowner"]
     }
     burn_df = pd.DataFrame(burn_data)
     
@@ -157,8 +178,12 @@ if st.sidebar.button("Run Simulation", type="primary"):
                       text_auto='.2s', # Restoring labels as requested
                       color_discrete_map={
                           "Rent": "#636EFA",             # Cool Blue
+                          "Investment Fees": "#A0A0A0",  # Grey
+                          "Tax Drag": "#696969",         # Dark Grey
                           "Mortgage Interest": "#EF553B", # Red-Orange (The big burn)
                           "Maintenance": "#FFA15A",       # Light Orange
+                          "Property Tax": "#FFD700",      # Gold
+                          "Home Insurance": "#B8860B",    # Dark Goldenrod
                           "Buying Costs (LTT)": "#AB63FA",# Purple
                           "Selling Costs (Agent)": "#19D3F3", # Cyan (Services)
                           "Moving Friction (Periodic)": "#FF6692" # Pink/Red
@@ -169,14 +194,13 @@ if st.sidebar.button("Run Simulation", type="primary"):
     
     # Check if Buying actually "Burned" more than Renting
     # Always show the Burn Comparison
-    burn_diff = total_home_burn - results['total_rent_paid']
+    burn_diff = total_home_burn - total_rent_burn
     
     if burn_diff > 0:
-        msg = f"⚠️ **Myth Buster**: The Homeowner 'threw away' **&#36;{total_home_burn:,.0f}** on interest, maintenance, and fees, while the Renter only paid **&#36;{results['total_rent_paid']:,.0f}** in rent!"
+        msg = f"⚠️ **Myth Buster**: The Homeowner 'threw away' **&#36;{total_home_burn:,.0f}** on interest, maintenance, tax, and fees, while the Renter 'burned' **&#36;{total_rent_burn:,.0f}** on rent and investment friction!"
         st.warning(msg)
     else:
-        msg = f"⚠️ **Reality Check**: The Homeowner still 'threw away' **&#36;{total_home_burn:,.0f}** on unrecoverable costs! (Renter paid **&#36;{results['total_rent_paid']:,.0f}**)."
-        st.warning(msg)
+        st.info(f"✅ **Reality Check**: In this expensive rental market, the Homeowner's unrecoverable costs (**&#36;{total_home_burn:,.0f}**) are actually LOWER than the Renter's total burn (**&#36;{total_rent_burn:,.0f}**). Owning wins on 'wasted' money here.")
     
 
 
