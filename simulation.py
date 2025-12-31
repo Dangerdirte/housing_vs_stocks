@@ -1,8 +1,7 @@
-
 import data_loader
 from models import HousingInvestment, StockInvestment
 
-def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=None, city="National", marginal_tax_rate=0.40):
+def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=None, city="National", marginal_tax_rate=0.40, move_freq_years="Never"):
     """
     Runs the simulation and returns a dictionary with results and history.
     """
@@ -96,21 +95,64 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
              year_rent = data_loader.get_average_rent(y, city=city)
 
         # Monthly Loop
-        
         for m in range(12):
-            current_month_index = (y - start_year) * 12 + m
+            # Dynamic Monthly Price
+            current_month_price = data_loader.get_monthly_housing_price(y, m+1, city)
             
-            # Renewal Logic
-            if current_month_index > 0 and current_month_index % 60 == 0:
-                new_rate = data_loader.get_mortgage_rate(y) / 100.0
-                months_passed = current_month_index
-                remaining_months = (mortgage_years * 12) - months_passed
-                if remaining_months > 0:
-                    remaining_years = remaining_months / 12.0
+            # Update Housing Model with new Market Value
+            # We don't use 'annual appreciation rate' anymore for value updates, 
+            # we force the value to the lookup table.
+            housing_model.current_value = current_month_price
+            
+            # Recalculate Equity
+            housing_model.equity = housing_model.current_value - housing_model.remaining_principal
+            
+            # Check for Mortgage Renewal (Every 5 years)
+            months_elapsed = (y - start_year) * 12 + m
+            if months_elapsed > 0 and months_elapsed % (5 * 12) == 0:
+                new_rate_pct = data_loader.get_mortgage_rate(y)
+                new_rate = new_rate_pct / 100.0
+                # Remaining amortization
+                remaining_years = max(0, mortgage_years - (months_elapsed / 12))
+                if remaining_years > 0:
                     housing_model.update_interest_rate(new_rate, remaining_years)
+
+            # Process Monthly Payment & Expenses
+            # (Inflation passed for maintenance scaling)
+            h_stat = housing_model.simulate_month(y, annual_appreciation_rate=0, annual_inflation_rate=annual_inflation)
             
-            h_stat = housing_model.simulate_month(y, annual_appreciation_rate=price_growth)
-            
+            # --- Moving Scenario Logic (Friction Costs) ---
+            transaction_cost_this_month = 0
+            if move_freq_years != "Never":
+                # Check if we move this month
+                # Logic: Move exactly every X years from start
+                if months_elapsed > 0 and months_elapsed % (move_freq_years * 12) == 0:
+                    # SELL OLD HOUSE
+                    # Costs: Agent Fees (~5%) + Legal
+                    # Use existing helper (calculates commission)
+                    net_proceeds = housing_model.get_net_proceeds()
+                    selling_friction = housing_model.equity - net_proceeds
+                    
+                    # BUY NEW HOUSE (Lateral Move)
+                    # Assume buying same price house (Lateral Upgrade)
+                    # Costs: Land Transfer Tax (LTT) + Legal
+                    buying_friction = housing_model.get_closing_costs(city)
+                    
+                    total_friction = selling_friction + buying_friction
+                    transaction_cost_this_month = total_friction
+                    
+                    # Deduct from Equity (Wealth Destruction)
+                    housing_model.equity -= total_friction
+                    
+                    # Re-Amortize? 
+                    # Usually people port mortgages or start new 25y. 
+                    # To isolate "Friction Cost", let's assume we keep the mortgage schedule 
+                    # (Ported) but paid the fees out of equity/cash.
+                    # Effectively: Equity drops, Debt stays same.
+                    # Warning: If Equity < 0, they are bankrupt.
+                    if housing_model.equity < 0:
+                        housing_model.equity = 0 # bankrupt logic simplified
+                        
             # Cash Flow
             housing_monthly_cost = h_stat['payment'] + h_stat['maintenance']
             monthly_stock_contribution = housing_monthly_cost - year_rent
@@ -153,7 +195,8 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
                 "Inflation Index": cumulative_inflation_index,
                 "Rent Paid (Stock Scenario)": year_rent, # Monthly Rent
                 "Mortgage Rate (%)": current_mortgage_rate_display,
-                "Refund Reinvested": refund_this_month
+                "Refund Reinvested": refund_this_month,
+                "Transaction Cost": transaction_cost_this_month
             })
         
         # End of Year: Calculate Tax Refund for NEXT year
@@ -170,6 +213,7 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
     
     # Calculate Totals for Analysis
     total_rent_paid = sum(d['Rent Paid (Stock Scenario)'] for d in history_data)
+    total_transaction_friction = sum(d['Transaction Cost'] for d in history_data)
         
     return {
         "history": history_data,
@@ -186,5 +230,6 @@ def run_simulation(start_year, mortgage_years, down_payment_pct, initial_rent=No
         "total_mortgage_interest": housing_model.total_interest_paid,
         "total_maintenance": housing_model.total_maintenance_cost,
         "total_rent_paid": total_rent_paid,
-        "total_stock_contributions": total_stock_contributions
+        "total_stock_contributions": total_stock_contributions,
+        "total_transaction_friction": total_transaction_friction
     }

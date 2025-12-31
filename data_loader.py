@@ -218,3 +218,51 @@ def get_rrsp_limit(year):
     # Valid approximation for "High Income" user is roughly 7500-11500 range in late 80s
     if year < 1991: return 7500 
     return RRSP_LIMITS.get(year, 32490)
+
+# Seasonality Index (Approximate Canadian Real Estate Cycle)
+# 1.0 = Average trend. >1.0 = Premium (Spring), <1.0 = Discount (Winter)
+SEASONALITY_INDEX = {
+    1: 0.98,  # Jan (Cold, slow)
+    2: 0.99,  # Feb
+    3: 1.01,  # Mar (Spring market starts)
+    4: 1.03,  # Apr
+    5: 1.04,  # May (Peak)
+    6: 1.03,  # Jun
+    7: 1.01,  # Jul (Summer slowdown starts)
+    8: 1.00,  # Aug
+    9: 1.01,  # Sep (Fall bump)
+    10: 1.00, # Oct
+    11: 0.99, # Nov
+    12: 0.97  # Dec (Holidays, dead market)
+}
+
+def get_monthly_housing_price(year, month, city="National"):
+    """
+    Returns the estimated price for a specific month.
+    Combines Annual Trend interpolation with Monthly Seasonality.
+    """
+    price_curr = get_housing_price(year, city)
+    price_next = get_housing_price(year + 1, city)
+    
+    if price_next is None:
+        price_next = price_curr * 1.03 # Assume 3% growth if no future data
+        
+    # Calculate Monthly Trend Growth
+    # We model the 'Annual Average' as the price roughly at the START of the year for simulation simplicity,
+    # and interpolate towards the next year's start.
+    if price_curr > 0:
+        annual_growth = price_next / price_curr
+    else:
+        annual_growth = 1.03
+        
+    monthly_growth_factor = annual_growth ** (1/12)
+    
+    # Base Trend Price for this month
+    # Month 1 = Current Year Baseline
+    # Month 12 = Approaches Next Year Baseline
+    base_price = price_curr * (monthly_growth_factor ** (month - 1))
+    
+    # Apply Seasonality
+    seasonal_multiplier = SEASONALITY_INDEX.get(month, 1.0)
+    
+    return base_price * seasonal_multiplier

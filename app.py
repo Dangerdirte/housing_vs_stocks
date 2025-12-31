@@ -29,6 +29,7 @@ if not use_historical_rent:
 st.sidebar.markdown("---")
 city = st.sidebar.selectbox("City", ["National", "Toronto", "Vancouver", "Calgary", "Montreal"], index=0)
 marginal_tax = st.sidebar.slider("Marginal Tax Rate (%)", 0, 54, 40)
+move_freq = st.sidebar.select_slider("Move Home Every X Years (Friction Costs)", options=["Never", 5, 7, 10, 15], value="Never")
 
 if st.sidebar.button("Run Simulation", type="primary"):
     # Run Simulation
@@ -38,7 +39,8 @@ if st.sidebar.button("Run Simulation", type="primary"):
         down_payment_pct=down_payment_pct,
         initial_rent=initial_rent_override,
         city=city,
-        marginal_tax_rate=marginal_tax/100.0
+        marginal_tax_rate=marginal_tax/100.0,
+        move_freq_years=move_freq
     )
     
     history_df = pd.DataFrame(results['history'])
@@ -77,47 +79,109 @@ if st.sidebar.button("Run Simulation", type="primary"):
     else:
         st.info(f"**{winner}** was the better financial decision by **${win_amount:,.0f}**!")
 
-    # --- MAIN CHART (Nominal Wealth) ---
+    # --- MAIN CHART (Net Wealth) ---
     st.markdown("### 📈 Net Wealth Over Time")
-    chart_df = history_df[['Date', 'House Equity', 'Stock Balance']].melt('Date', var_name='Asset', value_name='Value')
-    fig = px.line(chart_df, x='Date', y='Value', color='Asset', markers=False) # Markers false for density
     
-    # Improve Chart Styling
-    fig.update_layout(xaxis_title="Year", yaxis_title="Net Worth ($)", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+    tab_nom, tab_real = st.tabs(["Nominal ($)", "Inflation Adjusted (Real $)"])
+    
+    with tab_nom:
+        st.caption("Tracking **Net Worth** (Nominal). Homeowner = Equity (Value - Debt). Renter = Investment Portfolio.")
+        chart_df = history_df[['Date', 'House Equity', 'Stock Balance']].melt('Date', var_name='Scenario', value_name='Net Worth')
+        fig = px.line(chart_df, x='Date', y='Net Worth', color='Scenario', markers=False,
+                      color_discrete_map={
+                          "House Equity": "#1f77b4", 
+                          "Stock Balance": "#2ca02c"
+                      })
+        fig.update_layout(xaxis_title="Year", yaxis_title="Net Worth ($)", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+        
+    with tab_real:
+        st.caption("Tracking **Wealth (Buying Power)** adjusted for Inflation.")
+        chart_df_real = history_df[['Date', 'Real House Equity', 'Real Stock Balance']].melt('Date', var_name='Scenario', value_name='Net Worth')
+        fig_real = px.line(chart_df_real, x='Date', y='Net Worth', color='Scenario', markers=False,
+                           color_discrete_map={
+                               "Real House Equity": "#1f77b4", 
+                               "Real Stock Balance": "#2ca02c"
+                           })
+        fig_real.update_layout(xaxis_title="Year", yaxis_title="Net Worth (Real $)", hovermode="x unified")
+        st.plotly_chart(fig_real, use_container_width=True)
+    
+    with st.expander("ℹ️ How is this calculated?"):
+        st.markdown("""
+        *   **Stock Strategy**: The Renter takes the *exact* monthly cash flow difference (Mortgage + Tax + Maint - Rent) and invests it in the S&P 500.
+        *   **Housing Strategy**: The Homeowner builds equity by paying down principal and benefiting from property appreciation.
+        """)
 
     # --- UNRECOVERABLE COSTS ("THE BURN CHART") ---
     st.markdown("### 🔥 Unrecoverable Costs (Where did the money go?)")
-    st.caption("People say 'Rent is throwing money away', but Owning has its own 'Burn Rate'.")
+    st.info("""
+    **"Rent is throwing money away."** — We hear this all the time. 
+    But Owning has **unrecoverable costs** too: Mortgage Interest (profit for the bank), Maintenance (profit for the glimmer), Property Taxes, and Transaction Fees. 
+    This chart compares the total "burnt" cash in both scenarios.
+    """)
     
+    # Calculate Totals First
+    total_rent_burn = results['total_rent_paid']
+    total_home_burn = (results['total_mortgage_interest'] + 
+                       results['total_maintenance'] + 
+                       results['closing_costs_paid'] + 
+                       results['selling_costs_estimated'] + 
+                       results['total_transaction_friction'])
+    
+    # Display Totals as Big Metrics
+    col_burn1, col_burn2 = st.columns(2)
+    with col_burn1:
+        st.metric("Total Rent Paid", f"${total_rent_burn:,.0f}")
+    with col_burn2:
+         diff_burn = total_home_burn - total_rent_burn
+         st.metric("Total Home Ownership 'Burn'", f"${total_home_burn:,.0f}",
+                   delta=f"{diff_burn:,.0f} vs Rent", delta_color="inverse")
+
     burn_data = {
-        "Category": ["Rent", "Mortgage Interest", "Maintenance", "Buying Costs (LTT)", "Selling Costs (Agent)"],
+        "Category": ["Rent", "Mortgage Interest", "Maintenance", "Buying Costs (LTT)", "Selling Costs (Agent)", "Moving Friction (Periodic)"],
         "Amount": [
             results['total_rent_paid'],
             results['total_mortgage_interest'],
             results['total_maintenance'],
             results['closing_costs_paid'],
-            results['selling_costs_estimated']
+            results['selling_costs_estimated'], # Final sale
+            results['total_transaction_friction'] # Periodic moves
         ],
-        "Scenario": ["Renter", "Homeowner", "Homeowner", "Homeowner", "Homeowner"]
+        "Scenario": ["Renter", "Homeowner", "Homeowner", "Homeowner", "Homeowner", "Homeowner"]
     }
     burn_df = pd.DataFrame(burn_data)
     
     fig_burn = px.bar(burn_df, x="Scenario", y="Amount", color="Category", 
-                      title="Total Unrecoverable Costs (1990-2024)",
-                      text_auto='.2s', height=400)
-    fig_burn.update_traces(textfont_size=12, textangle=0, textposition="outside", cliponaxis=False)
+                      title="Total Unrecoverable Costs (Breakdown)",
+                      height=400,
+                      color_discrete_map={
+                          "Rent": "#636EFA",             # Cool Blue
+                          "Mortgage Interest": "#EF553B", # Red-Orange (The big burn)
+                          "Maintenance": "#FFA15A",       # Light Orange
+                          "Buying Costs (LTT)": "#AB63FA",# Purple
+                          "Selling Costs (Agent)": "#19D3F3", # Cyan (Services)
+                          "Moving Friction (Periodic)": "#FF6692" # Pink/Red
+                      })
+    fig_burn.update_layout(legend_title_text="Cost Category")
+    # Removed text_auto to fix crowding
     st.plotly_chart(fig_burn, use_container_width=True)
     
     # Check if Buying actually "Burned" more than Renting
-    total_home_burn = results['total_mortgage_interest'] + results['total_maintenance'] + results['closing_costs_paid'] + results['selling_costs_estimated']
     if total_home_burn > results['total_rent_paid']:
-        st.warning(f"⚠️ **Myth Buster**: The Homeowner 'threw away' **${total_home_burn:,.0f}** on interest, maintenance, and fees, while the Renter only paid **${results['total_rent_paid']:,.0f}** in rent!")
+        st.warning(f"⚠️ **Myth Buster**: The Homeowner 'threw away' **\\${total_home_burn:,.0f}** on interest, maintenance, and fees, while the Renter only paid **\\${results['total_rent_paid']:,.0f}** in rent!")
+    
+
 
     st.divider()
 
     # --- WEALTH COMPOSITION ---
-    st.markdown("### 💰 Wealth Composition")
+    st.markdown("### 💰 Wealth Composition (Source of Funds)")
+    st.caption("""
+    Where did the final number come from? 
+    *   **Initial Capital**: Your starting down payment.
+    *   **Contributions**: New money added over time (e.g., the Renter saving the difference).
+    *   **Net Growth**: Pure investment profit (Market Appreciation).
+    """)
     
     col1, col2 = st.columns(2)
     
@@ -171,17 +235,10 @@ if st.sidebar.button("Run Simulation", type="primary"):
 
     st.divider()
     
-    # Charts
-    tab2, tab3 = st.tabs(["Inflation Adjusted (Real)", "Raw Data"])
+    st.divider()
     
-    with tab2:
-        st.subheader("Net Wealth Over Time (Real / Inflation Adjusted)")
-        chart_df_real = history_df[['Date', 'Real House Equity', 'Real Stock Balance']].melt('Date', var_name='Asset', value_name='Value')
-        fig_real = px.line(chart_df_real, x='Date', y='Value', color='Asset', markers=False)
-        st.plotly_chart(fig_real, use_container_width=True)
-
-    with tab3:
-        st.subheader("Simulation Data")
+    # Data Inspection
+    with st.expander("🔍 View Raw Simulation Data"):
         st.dataframe(history_df.style.format({
             "House Price": "${:,.0f}",
             "House Equity": "${:,.0f}",
