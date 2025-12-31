@@ -77,6 +77,15 @@ if st.sidebar.button("Run Simulation", type="primary"):
     else:
         st.info(f"**{winner}** was the better financial decision by **${win_amount:,.0f}**!")
 
+    # --- MAIN CHART (Nominal Wealth) ---
+    st.markdown("### 📈 Net Wealth Over Time")
+    chart_df = history_df[['Date', 'House Equity', 'Stock Balance']].melt('Date', var_name='Asset', value_name='Value')
+    fig = px.line(chart_df, x='Date', y='Value', color='Asset', markers=False) # Markers false for density
+    
+    # Improve Chart Styling
+    fig.update_layout(xaxis_title="Year", yaxis_title="Net Worth ($)", hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
+
     # --- UNRECOVERABLE COSTS ("THE BURN CHART") ---
     st.markdown("### 🔥 Unrecoverable Costs (Where did the money go?)")
     st.caption("People say 'Rent is throwing money away', but Owning has its own 'Burn Rate'.")
@@ -163,14 +172,8 @@ if st.sidebar.button("Run Simulation", type="primary"):
     st.divider()
     
     # Charts
-    tab1, tab2, tab3 = st.tabs(["Nominal Wealth", "Inflation Adjusted (Real)", "Raw Data"])
+    tab2, tab3 = st.tabs(["Inflation Adjusted (Real)", "Raw Data"])
     
-    with tab1:
-        st.subheader("Net Wealth Over Time (Nominal)")
-        chart_df = history_df[['Date', 'House Equity', 'Stock Balance']].melt('Date', var_name='Asset', value_name='Value')
-        fig = px.line(chart_df, x='Date', y='Value', color='Asset', markers=False) # Markers false for density
-        st.plotly_chart(fig, use_container_width=True)
-
     with tab2:
         st.subheader("Net Wealth Over Time (Real / Inflation Adjusted)")
         chart_df_real = history_df[['Date', 'Real House Equity', 'Real Stock Balance']].melt('Date', var_name='Asset', value_name='Value')
