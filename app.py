@@ -154,6 +154,7 @@ if st.sidebar.button("Run Simulation", type="primary"):
     fig_burn = px.bar(burn_df, x="Scenario", y="Amount", color="Category", 
                       title="Total Unrecoverable Costs (Breakdown)",
                       height=400,
+                      text_auto='.2s', # Restoring labels as requested
                       color_discrete_map={
                           "Rent": "#636EFA",             # Cool Blue
                           "Mortgage Interest": "#EF553B", # Red-Orange (The big burn)
@@ -163,12 +164,19 @@ if st.sidebar.button("Run Simulation", type="primary"):
                           "Moving Friction (Periodic)": "#FF6692" # Pink/Red
                       })
     fig_burn.update_layout(legend_title_text="Cost Category")
-    # Removed text_auto to fix crowding
+    fig_burn.update_traces(textfont_size=12, textangle=0, textposition="inside", cliponaxis=False)
     st.plotly_chart(fig_burn, use_container_width=True)
     
     # Check if Buying actually "Burned" more than Renting
-    if total_home_burn > results['total_rent_paid']:
-        st.warning(f"⚠️ **Myth Buster**: The Homeowner 'threw away' **\\${total_home_burn:,.0f}** on interest, maintenance, and fees, while the Renter only paid **\\${results['total_rent_paid']:,.0f}** in rent!")
+    # Always show the Burn Comparison
+    burn_diff = total_home_burn - results['total_rent_paid']
+    
+    if burn_diff > 0:
+        msg = f"⚠️ **Myth Buster**: The Homeowner 'threw away' **&#36;{total_home_burn:,.0f}** on interest, maintenance, and fees, while the Renter only paid **&#36;{results['total_rent_paid']:,.0f}** in rent!"
+        st.warning(msg)
+    else:
+        msg = f"⚠️ **Reality Check**: The Homeowner still 'threw away' **&#36;{total_home_burn:,.0f}** on unrecoverable costs! (Renter paid **&#36;{results['total_rent_paid']:,.0f}**)."
+        st.warning(msg)
     
 
 
